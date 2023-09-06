@@ -716,7 +716,7 @@ class ShardingOptimizer(MetaOptimizerBase):
         self._recreate_not_persist_param_as_var()
 
         self._dump_program_for_debug()
-        self._wait()
+        # self._wait()
         return optimize_ops, params_grads
 
     def _init_pair_comm(self, pair, ring_id):
