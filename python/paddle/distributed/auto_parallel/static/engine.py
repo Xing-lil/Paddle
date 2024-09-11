@@ -698,6 +698,7 @@ class Engine:
         dist_program = mix_fw_program.clone()
         apply_mix2dist_pass(dist_program)
         set_all_ops_op_role(dist_program, OpRole.Forward)
+        print("### lzx ### Step 1.1: Mix2Dist Pass")
 
         # Step 1.2: pir backward
         if mode == "train" and self._loss and self._optimizer:
@@ -751,6 +752,7 @@ class Engine:
                         with auto_complete_op_role(
                             dist_program, OpRole.Backward
                         ):
+                            print("### lzx ### fix InferSPMD rule backward")
                             params_grads = (
                                 paddle.autograd.ir_backward.append_backward(
                                     loss
@@ -759,6 +761,7 @@ class Engine:
                         with auto_complete_op_role(
                             dist_program, OpRole.Optimize
                         ):
+                            print("### lzx ### fix InferSPMD rule")
                             self._optimizer._apply_optimize(
                                 loss, startup_program, params_grads=params_grads
                             )
@@ -789,11 +792,26 @@ class Engine:
         else:
             raise ValueError("auto_mode [] is not supported yet.".format())
 
+
+        if self._strategy.mp_optimization.replace_with_c_embedding:
+            print("### lzx ### replace_with_c_embedding is True")
+            config = {}
+            config["test"] = 1
+            auto_parallel_c_embedding_pass = new_pass(
+                "auto_parallel_c_embedding_pass", config
+            )
+            print("1111111---")
+            auto_parallel_c_embedding_pass.apply(
+                [dist_program], [startup_program]
+            )
+        print('after replace_with_c_embedding', dist_program, flush=1)
+
         # Part 3: Graph partition
         # TODO(JZ-LIANG) Step 3.1: Partition Pass
         #   insert reshard op if operand tensor's placements if different from what the cumsumer op need.
         #   Partition the computation graph into different pipeline stage if need.
         apply_partition_pass(dist_program)
+        print('after apply_partition', dist_program, flush=1)
 
         # TODO(hitywt) Step 3.2: Reshard Pass
         #   resolute the reshard op into special collective operation.
@@ -801,7 +819,7 @@ class Engine:
         global_params_grads = params_grads
 
         apply_reshard_pass(dist_program, params_grads)
-        # print('after reshard', dist_program, flush=1)
+        print('after reshard', dist_program, flush=1)
 
         remove_other_rank_input_output_pass(dist_program)
         # print(
@@ -848,6 +866,17 @@ class Engine:
             auto_parallel_gradient_merge_pass.apply(
                 [dist_program], [startup_program]
             )
+        # if self._strategy.mp_optimization.replace_with_c_embedding:
+        #     print("### lzx ### replace_with_c_embedding is True")
+        #     config = {}
+        #     config["test"] = 1
+        #     auto_parallel_c_embedding_pass = new_pass(
+        #         "auto_parallel_c_embedding_pass", config
+        #     )
+        #     auto_parallel_c_embedding_pass.apply(
+        #         [dist_program], [startup_program]
+        #     )
+        # print('after replace_with_c_embedding', dist_program, flush=1)
 
         # TODO(JZ-LIANG) Step 4.4 Dist2Dense Pass
         # NOTE All optimization pass that need dist_attr info should be called before Dist2Dense Pass.
@@ -965,6 +994,7 @@ class Engine:
             # build forward main program
             with utils.unique_name.guard():
                 self.program_helper.build_program(mode)
+            print("1111111")
 
             self.concrete_program = self.program_helper.concrete_program
             serial_main_prog = self.program_helper.main_program
@@ -977,6 +1007,7 @@ class Engine:
             self._losses = self.program_helper.loss_vars
             self._loss_names = self.program_helper.loss_names
             metrics = self.program_helper.metric_vars
+            print("2222")
 
             paddle.enable_static()
         else:
@@ -1025,7 +1056,6 @@ class Engine:
                     self._loss, Variable
                 ), "the type of `loss` of the Engine arguments should be Variable."
                 self._losses = auto_utils.to_list(self._loss)
-
         # TODO(zhiqiu): distributed_context is no longer used in pir_program
         # so, just return here and need to reimplement the logics below
         if self._in_pir_mode:
@@ -2098,7 +2128,29 @@ class Engine:
             else:
                 fetch_names = [loss_value]
             fetch_names += self._pir_fetch_values
+        print(self.main_program)
 
+        fetch_ops = []
+        for op in self.main_program.global_block().ops:
+            # if str(op.id()) == "1550" :
+            #     fetch_names += [op.result(0)]
+            #     fetch_ops += [op]
+
+            if (
+                op.name() == "pd_op.embedding"
+                or op.name() == "pd_op.c_embedding"
+            ):
+                for operand in op.operands_source():
+                    fetch_names += [operand]
+                    fetch_ops += [operand]
+                for result in op.results():
+                    fetch_names += [result]
+                    fetch_ops += [result]
+                print(
+                    "### lzx ### len :",
+                    len(op.operands_source()),
+                    len(op.results()),
+                )
         outs = self._executor.run(
             self.main_program,
             feed=feed_dict,
@@ -2108,6 +2160,15 @@ class Engine:
         )
 
         if self._in_pir_mode:
+            for index in range(1, len(outs)):
+                if len(fetch_ops) > index - 1:
+                    t = fetch_ops[index - 1]
+                    print("### lzx ### op::", t)
+                    # print(dir(fetch_ops[index - 1]))
+                    print("shape:", t.shape)
+                    print("placements:", t.placements)
+                    print("dist_attr:", t.dist_attr)
+
             if no_fetch:
                 logs = {"outputs": None, "loss": None}
                 start_idx = 0

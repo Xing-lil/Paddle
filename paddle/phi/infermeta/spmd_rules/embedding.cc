@@ -31,14 +31,36 @@ SpmdInfo EmbeddingInferSpmdUnsupportVocabParallel(const DistMetaTensor& x,
                                                   const DistMetaTensor& weight,
                                                   int padding_idx,
                                                   bool sparse) {
+  VLOG(0) << "EmbeddingInferSpmdUnsupportVocabParallel start";
   DistMetaTensor w(weight.dims(), weight.dist_attr());
-  if (weight.dist_attr().dims_mapping()[0] >= 0) {
-    auto w_dims_mapping = weight.dist_attr().dims_mapping();
-    w_dims_mapping[0] = -1;
-    TensorDistAttr w_dist(weight.dist_attr());
-    w_dist.set_dims_mapping(w_dims_mapping);
-    w = DistMetaTensor(w.dims(), w_dist);
-  }
+  VLOG(0) << "weight.dist_attr().dims_mapping()"
+          << weight.dist_attr().dims_mapping()[0];
+  VLOG(0) << "weight.dist_attr().dims_mapping()"
+          << weight.dist_attr().dims_mapping()[1];
+
+    // if (weight.dist_attr().dims_mapping()[0] >= 0) {
+    //   auto w_dims_mapping = weight.dist_attr().dims_mapping();
+    //   w_dims_mapping[0] = -1;
+    //   TensorDistAttr w_dist(weight.dist_attr());
+    //   w_dist.set_dims_mapping(w_dims_mapping);
+    //   w = DistMetaTensor(w.dims(), w_dist);
+    // }
+//   VLOG(0) << "weight.dist_attr()===="
+//           << w.dist_attr();
+//   auto w_dims_mapping = weight.dist_attr().dims_mapping();
+//   w_dims_mapping[0] = 1;
+//   w_dims_mapping[1] = -1;
+//   TensorDistAttr w_dist(weight.dist_attr());
+//   w_dist.set_dims_mapping(w_dims_mapping);
+//   w = DistMetaTensor(w.dims(), w_dist);
+
+  VLOG(0) << "weight.dist_attr().dims_mapping()"
+          << w.dist_attr().dims_mapping()[0];
+  VLOG(0) << "weight.dist_attr().dims_mapping()"
+          << w.dist_attr().dims_mapping()[1];
+  VLOG(0) << "weight.dist_attr()===="
+          << w.dist_attr();
+  VLOG(0) << "EmbeddingInferSpmdUnsupportVocabParallel end";
   return EmbeddingInferSpmd(x, w, padding_idx, sparse);
 }
 
@@ -46,7 +68,7 @@ SpmdInfo EmbeddingInferSpmd(const DistMetaTensor& x,
                             const DistMetaTensor& weight,
                             int padding_idx,
                             bool sparse) {
-  // Step0: Verify input args based on embedding logic
+  // Step0: Verify input args based on embedding logic 验证输入参数是否符合要求
   auto x_shape = common::vectorize(x.dims());
   auto weight_shape = common::vectorize(weight.dims());
   int x_ndim = static_cast<int>(x_shape.size());
@@ -78,10 +100,10 @@ SpmdInfo EmbeddingInferSpmd(const DistMetaTensor& x,
                         "but got a tensor with [%d] dimension.",
                         weight_ndim));
 
-  // determine parallel mode
+  // determine parallel mode 确定并行模式
   int64_t weight_row_axis_mapping = weight_dims_mapping[0];
 
-  // padding_idx s not supported by c_embedding kernel.
+  // padding_idx s not supported by c_embedding kernel. 检查 padding_idx 和 sparse 参数
   // (TODO) might be could reshard as replicated when padding_idx != -1
   if (padding_idx != -1) {
     PADDLE_ENFORCE_EQ(
@@ -116,7 +138,7 @@ SpmdInfo EmbeddingInferSpmd(const DistMetaTensor& x,
           << "sparse: "
           << "[" << (sparse ? "true" : "false") << "]; ";
 
-  // Step1: Build Einsum Notation
+  // Step1: Build Einsum Notation 构建 Einsum 符号表示 给每个轴取名
   std::string alphabet = "abcdefghilmnopqrstuvwxyz";
   std::string x_axes = GetBroadcastAxes(x_ndim, x_ndim, alphabet);
   std::string weight_axes = "jk";
@@ -124,10 +146,12 @@ SpmdInfo EmbeddingInferSpmd(const DistMetaTensor& x,
 
   // Step2: Sharding Propagation
   // Step2.1: merge input shardings
+  // 首先合并输入张量的切分映射，然后推导输出张量的切分映射，更新输入张量和权重矩阵的切分映射。
+  // 合并输入张量的映射
   auto axis_to_dim_map = ShardingMergeForTensors(
       {{x_axes, x_dims_mapping}, {weight_axes, weight_dims_mapping}}, false);
 
-  // Step2.2: infer output's dims mapping.
+  // Step2.2: infer output's dims mapping. ****推导输出张量的切分映射。
   TensorDistAttr out_dist_attr = CopyTensorDistAttrForOutput(x_dist_attr_src);
   std::vector<int64_t> out_dims_mapping =
       GetDimsMappingForAxes(out_axes, axis_to_dim_map);
@@ -145,13 +169,19 @@ SpmdInfo EmbeddingInferSpmd(const DistMetaTensor& x,
 
   // Step3: Handle Partial
   // (TODO) support case where embedding table is partial at very beginning.
+//   处理部分切分的情况，如果权重矩阵的行轴进行了切分，则将其添加到部分切分维度中。
   std::vector<int64_t> partial_on_dims;
   if (weight_row_axis_mapping > -1) {
+    VLOG(0) << "### lzx ### EmbeddingInferSpmd:: row partial";
     partial_on_dims.push_back(weight_row_axis_mapping);
+    VLOG(0) << "### lzx ### EmbeddingInferSpmd:: partial_on_dims" << partial_on_dims[0];
+
   }
   out_dist_attr.set_partial_status(partial_on_dims);
+  VLOG(0) << "### lzx ### EmbeddingInferSpmd:: out_dist_attr" << out_dist_attr;
+  
 
-  VLOG(4) << "EmbeddingInferSpmd:\n"
+  VLOG(0) << "EmbeddingInferSpmd:\n"
           << "Einsum notation: [" << x_axes << "," << weight_axes << " --> "
           << out_axes << "]. " << std::endl
           << "X shape: [" << str_join(x_shape) << "], src_dims_mapping: ["
@@ -162,7 +192,7 @@ SpmdInfo EmbeddingInferSpmd(const DistMetaTensor& x,
           << str_join(weight_dist_attr_dst.dims_mapping())
           << "]\n Out dims_mapping: [" << str_join(out_dims_mapping)
           << "], partial_on_dims: [" << str_join(partial_on_dims) << "]\n\n";
-
+  VLOG(0) << "### lzx ### x_dist_attr_dst," <<x_dist_attr_dst<<","<<weight_dist_attr_dst<<","<<out_dist_attr;
   return {{x_dist_attr_dst, weight_dist_attr_dst}, {out_dist_attr}};
 }
 

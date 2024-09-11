@@ -483,6 +483,7 @@ class LlamaModelAuto(nn.Layer):
             self.embed_tokens.weight,
             get_mesh(0),
             [dist.Replicate(), dist.Shard(1)],
+            # [dist.Shard(1), dist.Replicate()],
         )
 
         def get_layer_pp_info(layer_index):

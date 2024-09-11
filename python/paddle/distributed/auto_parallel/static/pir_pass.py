@@ -88,6 +88,7 @@ def apply_partition_pass(program):
     for op in program.global_block().ops:
         if op.name() in partition_skip_op_list:
             continue
+        print("*** lzx *** in apply_partition_pass:: op name:",op.name())
 
         assert len(op.operands()) == len(
             op.dist_attr.operands()
@@ -98,6 +99,7 @@ def apply_partition_pass(program):
 
         # deal with inplace value
         for out_idx, in_idx in paddle.core.pir.get_op_inplace_info(op).items():
+            # print("out_idx:",out_idx,"in_idx:",in_idx)
             ref_op_role = op.op_role
 
             operand = op.operand(in_idx)
@@ -120,6 +122,7 @@ def apply_partition_pass(program):
 
             result = op.result(out_idx)
             result_attr = op.dist_attr.result(out_idx).as_tensor_dist_attr()
+            # print("result:",result,"result_attr:",result_attr)
             assert (
                 operand_attr == result_attr
             ), f"For inplace value, The operend dist attr should be equal to result dist attr , please check your infer_spmd func of {op}"
@@ -163,9 +166,11 @@ def apply_partition_pass(program):
             prev_op = prev_var.get_defining_op()
             if prev_op and prev_op.num_results() == 1 and prev_var.use_empty():
                 prev_op.erase()
-
+        print(op.results())
+        print("op.dist_attr::",op.dist_attr)
         for var, attr in zip(op.results(), op.dist_attr.results()):
             if var.initialized() and var.is_dist() and var.dist_attr() != attr:
+                print("not equal")
                 paddle.pir.set_insertion_point_after(op)
                 old_dist_attr = var.dist_attr()
                 var.update_dist_attr(attr.as_tensor_dist_attr())
@@ -217,6 +222,7 @@ def apply_reshard_pass(dist_program, params_grads=[]):
 
     for op in dist_program.global_block().ops:
         if op.name() == 'dist_op.reshard':
+            print("### lzx ### apply_reshard_pass :: dist_op.reshard")
             var = op.operand_source(0)
 
             op_dist_attr = op.dist_attr
@@ -241,12 +247,15 @@ def apply_reshard_pass(dist_program, params_grads=[]):
             ref_op_role = op.op_role
 
             with auto_complete_op_role(dist_program, ref_op_role):
+                print("### lzx ### start reshard")
                 out_value = reshard_func.reshard(
                     src_dist_attr,
                     dst_dist_attr,
                     op.operand_source(0),
                     op.result(0).type(),
                 )
+                print("### lzx ### end reshard")
+
 
             if out_value is not None:
                 op.result(0).replace_all_uses_with(out_value)
