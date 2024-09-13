@@ -789,6 +789,16 @@ class Engine:
         else:
             raise ValueError("auto_mode [] is not supported yet.".format())
 
+        if self._strategy.mp_optimization.replace_with_c_embedding:
+            config = {}
+            config["test"] = 1
+            auto_parallel_c_embedding_pass = new_pass(
+                "auto_parallel_c_embedding_pass", config
+            )
+            auto_parallel_c_embedding_pass.apply(
+                [dist_program], [startup_program]
+            )
+
         # Part 3: Graph partition
         # TODO(JZ-LIANG) Step 3.1: Partition Pass
         #   insert reshard op if operand tensor's placements if different from what the cumsumer op need.
