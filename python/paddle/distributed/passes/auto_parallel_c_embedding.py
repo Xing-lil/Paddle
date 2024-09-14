@@ -37,12 +37,20 @@ class AutoParallelCEmbeddingPass(PassBase):
             if op.name() == 'pd_op.embedding':
                 # replace embedding with c_embedding
                 paddle.pir.set_insertion_point(op)
-                new_op = paddle._C_ops.c_embedding(
-                    op.operand(1).source(), op.operand(0).source(), 0, -1
+                num_embeddings = op.operand(1).source().type().shape[0]
+                world_size = paddle.distributed.get_world_size()
+                rank = paddle.distributed.get_rank()
+                per_part_size = num_embeddings // world_size
+                vocab_start_index = rank * per_part_size
+                t_op = paddle._C_ops.c_embedding(
+                    op.operand(1).source(),
+                    op.operand(0).source(),
+                    vocab_start_index,
+                    num_embeddings,
                 )
-                new_op.get_defining_op().op_role = int(OpRole.Optimize)
-                new_op = new_op.get_defining_op()
-                op.result(0).replace_all_uses_with(new_op)
+                t_op.get_defining_op().op_role = int(OpRole.Optimize)
+                new_op = t_op.get_defining_op()
+                op.result(0).replace_all_uses_with(t_op)
                 op.erase()
 
                 # output
@@ -65,7 +73,7 @@ class AutoParallelCEmbeddingPass(PassBase):
                 )
                 new_op.results()[0].set_type(dist_type_out0)
 
-                # input0
+                # input0 weight
                 placements_input0 = new_op.operand(0).source().placements
                 dim_map_input0, partial_status_input0 = (
                     dist.auto_parallel.placement_type.to_dim_map(
@@ -85,7 +93,7 @@ class AutoParallelCEmbeddingPass(PassBase):
                 )
                 new_op.operand(0).source().set_type(dist_type_input0)
 
-                # input1
+                # input1 x
                 placements_input1 = new_op.operand(1).source().placements
                 dim_map_input1, partial_status_input1 = (
                     dist.auto_parallel.placement_type.to_dim_map(
